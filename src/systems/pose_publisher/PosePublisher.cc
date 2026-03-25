@@ -5,7 +5,7 @@
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -180,6 +180,9 @@ PosePublisher::PosePublisher()
 }
 
 //////////////////////////////////////////////////
+PosePublisher::~PosePublisher() = default;
+
+//////////////////////////////////////////////////
 void PosePublisher::Configure(const Entity &_entity,
     const std::shared_ptr<const sdf::Element> &_sdf,
     EntityComponentManager &_ecm,
@@ -202,10 +205,6 @@ void PosePublisher::Configure(const Entity &_entity,
     _sdf->Get<bool>("publish_nested_model_pose",
         this->dataPtr->publishNestedModelPose).first;
 
-  // for backward compatibility, publish_model_pose will be set to the
-  // same value as publish_nested_model_pose if it is not specified.
-  // todo(iche033) Remove backward compatibility and decouple model and
-  // nested model pose parameter value in gz-sim10
   this->dataPtr->publishModelPose =
     _sdf->Get<bool>("publish_model_pose",
         this->dataPtr->publishNestedModelPose).first;
@@ -237,7 +236,6 @@ void PosePublisher::Configure(const Entity &_entity,
 
   if (this->dataPtr->staticPosePublisher)
   {
-    // update rate for static transforms. Default to same as <update_frequency>
     double staticPoseUpdateFrequency =
       _sdf->Get<double>("static_update_frequency", updateFrequency).first;
 
@@ -250,7 +248,6 @@ void PosePublisher::Configure(const Entity &_entity,
     }
   }
 
-  // create publishers
   this->dataPtr->usePoseV =
     _sdf->Get<bool>("use_pose_vector_msg", this->dataPtr->usePoseV).first;
 
@@ -305,12 +302,24 @@ void PosePublisher::Configure(const Entity &_entity,
 }
 
 //////////////////////////////////////////////////
+void PosePublisher::Reset(const UpdateInfo &/*_info*/,
+                          EntityComponentManager &/*_ecm*/)
+{
+  // Clear caches so they are re-initialized in PostUpdate
+  this->dataPtr->entitiesToPublish.clear();
+  this->dataPtr->dynamicEntities.clear();
+  this->dataPtr->initialized = false;
+
+  this->dataPtr->lastPosePubTime = std::chrono::steady_clock::duration::zero();
+  this->dataPtr->lastStaticPosePubTime = std::chrono::steady_clock::duration::zero();
+}
+
+//////////////////////////////////////////////////
 void PosePublisher::PostUpdate(const UpdateInfo &_info,
     const EntityComponentManager &_ecm)
 {
   GZ_PROFILE("PosePublisher::PostUpdate");
 
-  // \TODO(anyone) Support rewind
   if (_info.dt < std::chrono::steady_clock::duration::zero())
   {
     gzwarn << "Detected jump back in time ["
@@ -318,15 +327,11 @@ void PosePublisher::PostUpdate(const UpdateInfo &_info,
            << "s]. System may not work properly." << std::endl;
   }
 
-  // Nothing left to do if paused.
   if (_info.paused)
     return;
 
   bool publish = true;
   auto diff = _info.simTime - this->dataPtr->lastPosePubTime;
-  // If the diff is positive and it's less than the update period, we skip
-  // publication. If the diff is negative, then time has gone backward, we go
-  // ahead publish and allow the time to be reset
   if ((diff > std::chrono::steady_clock::duration::zero()) &&
       (diff < this->dataPtr->updatePeriod))
   {
@@ -351,8 +356,6 @@ void PosePublisher::PostUpdate(const UpdateInfo &_info,
     this->dataPtr->initialized = true;
   }
 
-
-  // if static transforms are published through a different topic
   if (this->dataPtr->staticPosePublisher)
   {
     if (publishStatic)
@@ -373,7 +376,6 @@ void PosePublisher::PostUpdate(const UpdateInfo &_info,
       this->dataPtr->lastPosePubTime = _info.simTime;
     }
   }
-  // publish all transforms to the same topic
   else if (publish)
   {
     this->dataPtr->poses.clear();
@@ -446,7 +448,6 @@ void PosePublisherPrivate::InitializeEntitiesToPublish(
       this->entitiesToPublish[entity] = std::make_pair(frame, childFrame);
     }
 
-    // get dynamic entities
     if (this->staticPosePublisher && joint)
     {
       sdf::JointType jointType =
@@ -466,7 +467,6 @@ void PosePublisherPrivate::InitializeEntitiesToPublish(
             components::Name(childLinkName), components::Link(),
             components::ParentEntity(this->model.Entity()));
 
-        // add to list if not a canonical link
         if (!_ecm.Component<components::CanonicalLink>(parentLinkEntity))
           this->dynamicEntities.insert(parentLinkEntity);
         if (!_ecm.Component<components::CanonicalLink>(childLinkEntity))
@@ -474,32 +474,26 @@ void PosePublisherPrivate::InitializeEntitiesToPublish(
       }
     }
 
-    // Recursively check if child entities need to be published
     auto childEntities =
         _ecm.ChildrenByComponents(entity, components::ParentEntity(entity));
 
-    // Use reverse iterators to match the order of entities found so as to match
-    // the expected order in the pose_publisher integration test.
     for (auto childIt = childEntities.rbegin(); childIt != childEntities.rend();
          ++childIt)
     {
       auto it = std::find(visited.begin(), visited.end(), *childIt);
       if (it == visited.end())
       {
-        // Only add to stack if the entity hasn't been already been visited.
-        // This also ensures there are no cycles.
         toCheck.push(*childIt);
       }
     }
   }
 
-  // sanity check to make sure dynamicEntities are a subset of entitiesToPublish
   for (auto const &ent : this->dynamicEntities)
   {
     if (this->entitiesToPublish.find(ent) == this->entitiesToPublish.end())
     {
       gzwarn << "Entity id: '" << ent << "' not found when creating a list "
-              << "of dynamic entities in pose publisher." << std::endl;
+             << "of dynamic entities in pose publisher." << std::endl;
     }
   }
 
@@ -546,7 +540,6 @@ void PosePublisherPrivate::PublishPoses(
   if (_poses.empty())
     return;
 
-  // publish poses
   msgs::Pose *msg = nullptr;
   if (this->usePoseV)
     this->poseVMsg.Clear();
@@ -567,10 +560,6 @@ void PosePublisherPrivate::PublishPoses(
       msg = &this->poseMsg;
     }
 
-    // fill pose msg
-    // frame_id: parent entity name
-    // child_frame_id = entity name
-    // pose is the transform from frame_id to child_frame_id
     GZ_ASSERT(msg != nullptr, "Pose msg is null");
     auto header = msg->mutable_header();
 
@@ -585,24 +574,22 @@ void PosePublisherPrivate::PublishPoses(
     childFrame->set_key("child_frame_id");
     childFrame->add_value(childFrameId);
 
-    // set pose
     msg->set_name(childFrameId);
     msgs::Set(msg, transform);
 
-    // publish individual pose msgs
     if (!this->usePoseV)
       _publisher.Publish(this->poseMsg);
   }
 
-  // publish pose vector msg
   if (this->usePoseV)
     _publisher.Publish(this->poseVMsg);
 }
 
 GZ_ADD_PLUGIN(PosePublisher,
-                    System,
-                    PosePublisher::ISystemConfigure,
-                    PosePublisher::ISystemPostUpdate)
+              gz::sim::System,
+              PosePublisher::ISystemConfigure,
+              PosePublisher::ISystemPostUpdate,
+              PosePublisher::ISystemReset)
 
 GZ_ADD_PLUGIN_ALIAS(PosePublisher,
                           "gz::sim::systems::PosePublisher")
