@@ -5,7 +5,7 @@
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -18,57 +18,32 @@
 #define GZ_SIM_SYSTEMS_POSEPUBLISHER_HH_
 
 #include <memory>
-#include <gz/sim/config.hh>
 #include <gz/sim/System.hh>
 
 namespace gz
 {
 namespace sim
 {
-// Inline bracket to help doxygen filtering.
+// Inline to prevent multiple definitions
 inline namespace GZ_SIM_VERSION_NAMESPACE {
 namespace systems
 {
-  // Forward declaration
+  // Forward declaration of private data class
   class PosePublisherPrivate;
 
-  /// \brief Pose publisher system. Attach to an entity to publish the
-  /// transform of its child entities in the form of gz::msgs::Pose
-  /// messages, or a single gz::msgs::Pose_V message if
-  /// "use_pose_vector_msg" is true.
-  ///
-  /// ## System Parameters
-  ///
-  /// - `<publish_link_pose>`: Set to true to publish link pose
-  /// - `<publish_visual_pose>`: Set to true to publish visual pose
-  /// - `<publish_collision_pose>`: Set to true to publish collision pose
-  /// - `<publish_sensor_pose>`: Set to true to publish sensor pose
-  /// - `<publish_model_pose>`: Set to true to publish model pose.
-  /// - `<publish_nested_model_pose>`: Set to true to publish nested model
-  ///   pose. The pose of the model that contains this system is also published
-  ///   unless publish_model_pose is set to false
-  /// - `<use_pose_vector_msg>`: Set to true to publish a gz::msgs::Pose_V
-  ///   message instead of multiple gz::msgs::Pose messages.
-  /// - `<update_frequency>`: Frequency of pose publications in Hz. A negative
-  ///   frequency publishes as fast as possible (i.e, at the rate of the
-  ///   simulation step)
-  /// - `<static_publisher>`: Set to true to publish static poses on a
-  ///   "<scoped_entity_name>/pose_static" topic. This will cause only dynamic
-  ///   poses to be published on the "<scoped_entity_name>/pose" topic.
-  /// - `<static_update_frequency>`: Frequency of static pose publications in
-  ///   Hz. A negative frequency publishes as fast as possible (i.e, at the
-  ///   rate of the simulation step).
-  /// - `<topic>`: Set a custom topic instead of default value
-  class PosePublisher
-      : public System,
-        public ISystemConfigure,
-        public ISystemPostUpdate
+  /// \brief A system that publishes the poses of entities in the simulation.
+  /// It can publish poses of links, models, visuals, collisions, and sensors.
+  class PosePublisher :
+    public System,
+    public ISystemConfigure,
+    public ISystemPostUpdate,
+    public ISystemReset // <--- Added this interface
   {
     /// \brief Constructor
     public: PosePublisher();
 
     /// \brief Destructor
-    public: ~PosePublisher() override = default;
+    public: ~PosePublisher() override;
 
     // Documentation inherited
     public: void Configure(const Entity &_entity,
@@ -77,14 +52,20 @@ namespace systems
                            EventManager &_eventMgr) override;
 
     // Documentation inherited
-    public: void PostUpdate(
-                const UpdateInfo &_info,
-                const EntityComponentManager &_ecm) override;
+    public: void PostUpdate(const UpdateInfo &_info,
+                            const EntityComponentManager &_ecm) override;
+
+    /// \brief Reset the system to its initial state.
+    /// \param[in] _info Update information.
+    /// \param[in] _ecm The Entity Component Manager.
+    // Documentation inherited
+    public: void Reset(const UpdateInfo &_info,
+                       EntityComponentManager &_ecm) override; // <--- Added this
 
     /// \brief Private data pointer
     private: std::unique_ptr<PosePublisherPrivate> dataPtr;
   };
-  }
+}
 }
 }
 }
